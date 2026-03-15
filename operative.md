@@ -15,12 +15,9 @@ Vagy éppen ritka értékek amik mindenhol máshol hiányoznak
 Itt ott szöveg beírva az érték helyett
 
 
-
-
 Kérdések:
 Illető halála, a szerepel vagy csak az, hogy intenzívre került-e?
 Ez intenzív/sürgősségisek kombinálva, vagy csak a sürgősségisek?
-
 
 
 Konzi 03.11.
@@ -37,3 +34,10 @@ Plusz -> Megnézni:
 - CNN-t erre a datasetre
 - Meg egy csomó más modellt is
 - VisionTransformer (Hétfő dél, QBF14  12:15-től, előadás után maradjak, konzizunkk)
+
+
+Konzi 03.16.
+Kérdések:
+- Ha a puszta modell & tanítás kevésnek bizonyulna, az jó kiegészítés ha használható alkalmazássát csinálok belőle?
+
+Konzi:
