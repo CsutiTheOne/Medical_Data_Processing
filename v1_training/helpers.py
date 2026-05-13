@@ -20,7 +20,7 @@ STD = [0.242, 0.223, 0.231]
 
 #Image size for model input
 IMG_SIZE = (224, 224)   #A gpu-m nem bír többet :c
-TILTED_SIZE = tuple(int(1.2*i) for i in IMG_SIZE)
+TILTED_SIZE = tuple(int(1.42*i) for i in IMG_SIZE)
 
 class CenterSquareCrop:
     #Relevant part is in the center
@@ -39,8 +39,10 @@ def ComposeTrainingTransforms():
     return transforms.Compose([
         CenterSquareCrop(),
         transforms.Resize(TILTED_SIZE),
-        transforms.RandomRotation(degrees=180, fill=0, expand=False),
+        transforms.RandomRotation(degrees=180, fill=0, expand=True, interpolation=transforms.InterpolationMode.BILINEAR,),
         transforms.CenterCrop(IMG_SIZE),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomVerticalFlip(p=0.5),
         transforms.ToTensor(),
         transforms.Normalize(mean=MEAN, std=STD),
     ])
@@ -54,6 +56,12 @@ def ComposeRegularTransforms():
         transforms.Normalize(mean=MEAN, std=STD),
     ])
 
+#Unnormalize image
+#Usually for demo display
+meanT = torch.tensor(STD)
+stdT = torch.tensor(MEAN)
+def UnnormalizeImage(img):
+    return img * meanT + stdT
 
 
 ################
@@ -176,6 +184,7 @@ def ComposeCM(classNames:list[str]) -> pd.DataFrame:
     #Convention: Column name is actual class, row name is predicted class
     return pd.DataFrame(columns=classNames, index=classNames).fillna(0)
 
+#Flatten a CM into a single row so it can be stored in DF
 def FlattenCM(cm:pd.DataFrame) -> dict[str, int]:
     #Format: cm_true_{name}_pred_{name}
     return {
@@ -184,8 +193,7 @@ def FlattenCM(cm:pd.DataFrame) -> dict[str, int]:
         for true in cm.columns
     }
 
-#stat handling
-#focus on confusion matrix handling
+#Parse a flattened CM row from DF back
 def ParseCM(CM:pd.DataFrame) -> pd.DataFrame:
     #Format: cm_true_{name}_pred_{name}
     ClassNames = sorted(list({ className.split("pred_")[1] for className in CM.keys() if "pred" in className} ))
@@ -212,7 +220,7 @@ def PredictionsPerClass(CM, className):
     return TP, FN, FP, TN
 
 def ClassMetrics(TP, FN, FP, TN):
-    accuracy = TP / (TP +FN + FP + TN)
+    accuracy = (TP + TN) / (TP + FN + FP + TN)
     recall = TP / (TP + FN)
     precision = TP / (TP + FP)
     F1_score = (2*precision*recall) / (precision + recall)
