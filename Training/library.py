@@ -3,8 +3,8 @@ from torchvision.transforms import transforms
 from torch.utils.data import DataLoader
 from torchvision import datasets
 
-from consts import DS_PATH, MEAN, STD, IMG_SIZE, TILTED_SIZE
-import metrics as m
+from Training.consts import DS_PATH, MEAN, STD, IMG_SIZE, TILTED_SIZE
+import Training.metrics as m
 
 """
     This file is a function library to help
@@ -90,6 +90,8 @@ def validate(model, dataLoader, criterion, device):
         By iterating trough dataloader records 
         the performance of provided model
     """
+    model.to(device)
+    criterion.to(device)
     model.eval()
     running_loss = 0.0
     correct = 0
@@ -123,6 +125,8 @@ def trainingEpoch(model, dataLoader, criterion, optimizer, device):
     """
         Executes a single training epoch on the model
     """
+    model.to(device)
+    criterion.to(device)
     model.train()
     running_loss = 0.0
     correct = 0

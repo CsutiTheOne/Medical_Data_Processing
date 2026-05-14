@@ -5,8 +5,8 @@ from collections import Counter
 import torch
 import pandas as pd
 
-import library as lib
-import metrics as m
+import Training.library as lib
+import Training.metrics as m
 
 ###################################
 #   NOTEBOOK SPECIFIC RESOURCES   #
@@ -50,16 +50,6 @@ class TrainingResources:
     criterion = optimizer = None
     train_loader = val_loader = test_loader = None
 
-    def __init__(self, c:Config, model, device):
-        self.initPaths(c.modelName)
-        self.device = device
-        self.model = model
-
-        self.train_loader, self.val_loader, self.test_loader = lib.getDataLoaders(c.batchSize, c.workers)
-        
-        self.initTrainers(c, model, self.train_loader)
-        self.criterion.to(device)
- 
     def initPaths(self, modelName):
         modelFolder = f"Models/{modelName}"
         plotsFolder = f"{modelFolder}/plots"
@@ -72,20 +62,16 @@ class TrainingResources:
         self.historyPath = f"{modelFolder}/history.csv"     #recorded stats during training
         self.statePath = f"{modelFolder}/state.pth"         #optimizer & current epoch
 
-    def initTrainers(self, c:Config, model, train_loader):
-        """
-            Initializes loss function and optimizer
-            Inverse freq calc for losssFn included
-        """
-        numClasses = len(train_loader.dataset.classes)
-        totalSamples = len(train_loader.dataset)
-        samplesPerClass = Counter(train_loader.dataset.targets) 
+    def __init__(self, c:Config, model, initTrainers:callable, device):
+        self.initPaths(c.modelName)
+        self.device = device
+        self.model = model
 
-        inverseFrequencies = [ totalSamples/(numClasses * samplesPerClass[i]) for i in range(numClasses) ]
+        self.train_loader, self.val_loader, self.test_loader = lib.getDataLoaders(c.batchSize, c.workers)
         
-        self.criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor(inverseFrequencies))
-        self.optimizer = torch.optim.AdamW(model.parameters(), lr=c.learningRate, weight_decay=c.weightDecay)
-        
+        self.criterion, self.optimizer = initTrainers(c, model, self.train_loader.dataset)
+        #self.criterion.to(device)
+        #self.model.to(device)
 
     def load(self, c:Config):
         if not c.purge and path.exists(self.latestModelPath):
@@ -93,10 +79,10 @@ class TrainingResources:
             #If config says to load bestVal, history is still 
             #for of the latest model
             self.model.load_state_dict(
-                torch.load(self.bestValPath if c.loadBest else self.latestModelPath)
+                torch.load(self.bestValPath if c.loadBest else self.latestModelPath, map_location=self.device)
             )
             
-            state = torch.load(self.statePath)
+            state = torch.load(self.statePath, map_location=self.device)
             self.optimizer.load_state_dict(state["optimizer"])
             self.epochs_done = state["epoch"]
             #load recorded stats too
@@ -117,6 +103,43 @@ class TrainingResources:
             }, self.statePath)
         self.history.to_csv(self.historyPath, index=False)
 
+
+
+#############################
+#   LOSS FN AND OPTIMIZER   #
+#############################
+
+def calcClassWeights(dataset):
+    """
+        Calculates the inverse frequenceis of
+        each class to balance dataset
+    """
+    numClasses = len(dataset.classes)
+    totalSamples = len(dataset)
+    samplesPerClass = Counter(dataset.targets) 
+
+    inverseFrequencies = [ totalSamples/(numClasses * samplesPerClass[i]) for i in range(numClasses) ]
+    return inverseFrequencies
+
+def calcMelanomaWeights():
+    #Weigh 
+    pass
+
+#For multi class classifier
+def initClassifierTrainers(c:Config, model, dataset):
+        """
+            Initializes loss function and optimizer
+            Inverse freq calc for losssFn included
+        """
+        invFreqs = calcClassWeights(dataset)
+        criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor(invFreqs))
+        optimizer = torch.optim.AdamW(model.parameters(), lr=c.learningRate, weight_decay=c.weightDecay)
+
+        return criterion, optimizer
+
+def initMelanomaDetectorTrainers():
+    #Different optimizer and loss for melanoma detection
+    pass
 
 
 #############################

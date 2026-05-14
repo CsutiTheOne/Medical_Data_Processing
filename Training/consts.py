@@ -3,7 +3,7 @@
 """
 
 #Path to modified SLC Dataset from porject folder
-DS_PATH = "Data/medical data/skin_lesions_classification"
+DS_PATH = "Data/skin_lesions_classification"
 
 #Pixelstats for normalization (derived by measurement)
 MEAN = [0.62374597, 0.52011699, 0.50394945]

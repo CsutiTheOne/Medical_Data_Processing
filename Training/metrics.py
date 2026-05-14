@@ -44,8 +44,8 @@ def PredictionsPerClass(CM, className):
     return TP, FN, FP, TN
 
 def ClassMetrics(TP, FN, FP, TN):
-    accuracy = (TP + TN) / (TP + FN + FP + TN)
-    precision = TP / (TP + FP)
-    recall = TP / (TP + FN)
-    F1_score = (2*precision*recall) / (precision + recall)
+    accuracy = (TP + TN) / (TP + FN + FP + TN)              if (TP+FN+FP+TN) else 0
+    precision = TP / (TP + FP)                              if (TP+FP) else 0
+    recall = TP / (TP + FN)                                 if (TP+FN) else 0
+    F1_score = (2*precision*recall) / (precision + recall)  if (precision + recall) else 0
     return accuracy, precision, recall, F1_score
