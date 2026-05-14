@@ -1,4 +1,3 @@
-import os
 import torch
 from torchvision.transforms import transforms
 from torch.utils.data import DataLoader
@@ -11,40 +10,6 @@ import metrics as m
     This file is a function library to help
     model training easier
 """
-
-#Configuration 
-
-class Config:
-    modelName = "name"
-    purge     = False   #Start a new model from scratch
-    training  = False   #to run training cycle
-    
-    batchSize  = 4 #Paralell training examples 
-    workers    = 8 #CPU workers to load data to gpu
-    learningRate = 1e-4
-    weightDecay  = 1e-4
-
-    training_epochs = 100
-
-    def __init__(self, mname):
-        self.modelName = mname
-        self.getPaths()
-
-    def getPaths(self):
-        modelFolder = f"Models/{self.modelName}"
-        plotsFolder = f"{modelFolder}/plots"
-        self.plotsFolder = plotsFolder
-        
-        os.makedirs(plotsFolder, exist_ok=True)
-        
-        self.latestModelPath = f"{modelFolder}/latest.pth"  #weights after last training epoch
-        self.bestValPath = f"{modelFolder}/best_val.pth"    #weights with highest validation score
-
-        self.historyPath = f"{modelFolder}/history.csv"     #recorded stats during training
-        self.statePath = f"{modelFolder}/state.pth"         #optimizer & current epoch
-
-
-
 
 
 #####################################
@@ -115,9 +80,9 @@ def getDataLoaders(batchSize, workers):
 
 
 
-################
-#   TRAINING   #
-################
+##################################
+#   FUNCTION USED FOR TRAINING   #
+##################################
 
 @torch.no_grad()
 def validate(model, dataLoader, criterion, device):
@@ -131,7 +96,7 @@ def validate(model, dataLoader, criterion, device):
     total = 0
     #confusion matrix
     classNames = dataLoader.dataset.classes
-    CM = m.ComposeCM(classNames)
+    CM = m.InitCM(classNames)
 
     for images, labels in dataLoader:
         images = images.to(device)
@@ -185,11 +150,3 @@ def trainingEpoch(model, dataLoader, criterion, optimizer, device):
     train_loss = running_loss / total
     train_acc = correct / total
     return train_loss, train_acc
-
-
-def trainingLoop(c:Config, model, dataLoader, criterion, optimizer, device):
-    if not c.training:
-        
-
-
-
