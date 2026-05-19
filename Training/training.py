@@ -1,12 +1,15 @@
 from os import makedirs, path
 from time import sleep
 from collections import Counter
+import gc
 
 import torch
 import pandas as pd
+pd.options.display.max_columns = None
+pd.options.display.max_rows = None
 
 import Training.library as lib
-import Training.metrics as m
+from Training.metrics import flattenCM
 
 ###################################
 #   NOTEBOOK SPECIFIC RESOURCES   #
@@ -64,25 +67,30 @@ class TrainingResources:
 
     def __init__(self, c:Config, model, initTrainers:callable, device):
         self.initPaths(c.modelName)
-        self.device = device
-        self.model = model
+        self.device = torch.device(device) if not isinstance(device, torch.device) else device
 
-        self.train_loader, self.val_loader, self.test_loader = lib.getDataLoaders(c.batchSize, c.workers)
-        
-        self.criterion, self.optimizer = initTrainers(c, model, self.train_loader.dataset)
-        #self.criterion.to(device)
-        #self.model.to(device)
+        self.model = model.to(self.device)
+
+        self.train_loader, self.val_loader, self.test_loader = lib.getDataLoaders(c.batchSize, c.workers, c.numClasses==2)
+
+        self.criterion, self.optimizer = initTrainers(c, self.model, self.train_loader.dataset)
+        # ensure criterion (loss weights) is on the same device
+        try:
+            self.criterion = self.criterion.to(self.device)
+        except Exception:
+            pass
 
     def load(self, c:Config):
         if not c.purge and path.exists(self.latestModelPath):
             #Note: this loads latest model by default
             #If config says to load bestVal, history is still 
             #for of the latest model
+            map_loc = self.device
             self.model.load_state_dict(
-                torch.load(self.bestValPath if c.loadBest else self.latestModelPath, map_location=self.device)
+                torch.load(self.bestValPath if c.loadBest else self.latestModelPath, map_location=map_loc)
             )
             
-            state = torch.load(self.statePath, map_location=self.device)
+            state = torch.load(self.statePath, map_location=map_loc)
             self.optimizer.load_state_dict(state["optimizer"])
             self.epochs_done = state["epoch"]
             #load recorded stats too
@@ -109,6 +117,7 @@ class TrainingResources:
 #   LOSS FN AND OPTIMIZER   #
 #############################
 
+#For multi class classifier
 def calcClassWeights(dataset):
     """
         Calculates the inverse frequenceis of
@@ -121,25 +130,38 @@ def calcClassWeights(dataset):
     inverseFrequencies = [ totalSamples/(numClasses * samplesPerClass[i]) for i in range(numClasses) ]
     return inverseFrequencies
 
-def calcMelanomaWeights():
-    #Weigh 
-    pass
-
-#For multi class classifier
 def initClassifierTrainers(c:Config, model, dataset):
-        """
-            Initializes loss function and optimizer
-            Inverse freq calc for losssFn included
-        """
-        invFreqs = calcClassWeights(dataset)
-        criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor(invFreqs))
-        optimizer = torch.optim.AdamW(model.parameters(), lr=c.learningRate, weight_decay=c.weightDecay)
+    """
+        Initializes loss function and optimizer
+        Inverse freq calc for losssFn included
+    """
+    invFreqs = calcClassWeights(dataset)
+    criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor(invFreqs))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=c.learningRate, weight_decay=c.weightDecay)
 
-        return criterion, optimizer
+    return criterion, optimizer
 
-def initMelanomaDetectorTrainers():
+#For binary classifier
+def calcMelanomaWeights(dataset):
+    totalSamples = len(dataset) #ok
+    melanoma = 0
+    nonMelanoma = 0
+    for classIdx, count in Counter(dataset.targets).items():
+        if dataset.classes[classIdx] == "Melanoma":
+            melanoma += count
+        else:
+            nonMelanoma += count
+    samples = [nonMelanoma, melanoma]
+    numClasses = len(samples)
+    return [ totalSamples/(numClasses * samples[i]) for i in range(numClasses) ] #inverse frequencies
+
+def initMelanomaDetectorTrainers(c:Config, model, dataset):
     #Different optimizer and loss for melanoma detection
-    pass
+    invFreqs = calcMelanomaWeights(dataset)
+    criterion = torch.nn.BCEWithLogitsLoss(weight=torch.tensor(invFreqs))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=c.learningRate, weight_decay=c.weightDecay)
+
+    return criterion, optimizer
 
 
 #############################
@@ -149,6 +171,14 @@ def initMelanomaDetectorTrainers():
 def trainingLoop(c:Config, tr:TrainingResources, stopAt = 0):
     if not c.training:
         print("Training turned off")
+        return
+    if c.loadBest:
+        print("Probably best model is loaded, training would ruin it!")
+        return
+
+    #Free up memory
+    gc.collect()
+    torch.cuda.empty_cache()
     
     model = tr.model
     device = tr.device
@@ -183,7 +213,7 @@ def trainingLoop(c:Config, tr:TrainingResources, stopAt = 0):
         statRow = {
             "epoch": epoch+1, "train_loss": train_loss, "train_acc": train_acc, "val_loss": val_loss, "val_acc": val_acc
         }
-        statRow.update(m.FlattenCM(CM))
+        statRow.update(flattenCM(CM))
         tr.recordStat(statRow)
         tr.save()
 

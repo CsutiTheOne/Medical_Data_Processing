@@ -1,0 +1,9 @@
+,accuracy,precision,recall,f1
+Actinic keratoses,98.35,78.05,72.73,75.29
+Basal cell carcinoma,97.17,85.95,93.69,89.66
+Benign keratosis-like lesions,95.24,76.3,78.33,77.3
+Dermatofibroma,99.69,90.48,76.0,82.61
+Melanocytic nevi,90.79,91.56,90.14,90.85
+Melanoma,91.65,76.96,75.94,76.44
+Squamous cell carcinoma,99.02,84.21,75.0,79.34
+Vascular lesions,99.69,78.12,96.15,86.21

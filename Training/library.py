@@ -1,10 +1,10 @@
 import torch
 from torchvision.transforms import transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets
 
 from Training.consts import DS_PATH, MEAN, STD, IMG_SIZE, TILTED_SIZE
-import Training.metrics as m
+from Training.metrics import initCM
 
 """
     This file is a function library to help
@@ -59,26 +59,50 @@ def UnnormalizeImage(img):
 
 
 
-########################
-#   DATALSET LOADERS   #
-########################
+###########################
+#   DATALSETS & LOADERS   #
+###########################
 
-def getDataset(split, transform=composeRegularTransforms()):
-    return datasets.ImageFolder(f"{DS_PATH}/{split}", transform=transform)
+class BinaryMelanomaDataset(datasets.ImageFolder):
+    #This class wraps around the original ds
+    #but turns every class other then melanoma to 0
+    def __getitem__(self, index):
+        img, originalLabel = super().__getitem__(index)
+        className = self.classes[originalLabel]
+        newLabel = 1.0 if className == "Melanoma" else 0.0
+        return img, torch.tensor(newLabel, dtype=torch.float32)
 
-def getDataLoaders(batchSize, workers):
+
+#For multi class classifiers
+#aka non-binary datasets
+def getDataset(split, transform=composeRegularTransforms(), binary=False):
+    ds = [datasets.ImageFolder, BinaryMelanomaDataset][int(binary)]
+    return ds(f"{DS_PATH}/{split}", transform=transform)
+
+def getClassifierDatasets():
     trainSet = getDataset("train", transform=composeTrainingTransforms())
-    trainLoader = DataLoader(trainSet, shuffle=True, batch_size=batchSize, num_workers=workers)
-    
     valSet = getDataset("val")
-    valLoader = DataLoader(valSet, shuffle=False, batch_size=batchSize, num_workers=workers)
-    
     testSet = getDataset("test")
+    return trainSet, valSet, testSet
+
+#For binary melanoma detector
+def getBinaryDatasets():
+    trainSet = getDataset("train", transform=composeTrainingTransforms(), binary=True)
+    valSet = getDataset("val", binary=True)
+    testSet = getDataset("test", binary=True)
+    return trainSet, valSet, testSet
+
+
+def getDataLoaders(batchSize, workers, binary=False):
+    trainSet, valSet, testSet = getBinaryDatasets() if binary else getClassifierDatasets()
+    
+    trainLoader = DataLoader(trainSet, shuffle=True, batch_size=batchSize, num_workers=workers)
+    valLoader = DataLoader(valSet, shuffle=False, batch_size=batchSize, num_workers=workers)
     testLoader = DataLoader(testSet, shuffle=False, batch_size=batchSize, num_workers=workers)
 
     return trainLoader, valLoader, testLoader
 
-
+#Binary is non-binary közötti választás lehetne sokkal rövidebb de mostmár nem varjálom
 
 ##################################
 #   FUNCTION USED FOR TRAINING   #
@@ -98,7 +122,7 @@ def validate(model, dataLoader, criterion, device):
     total = 0
     #confusion matrix
     classNames = dataLoader.dataset.classes
-    CM = m.InitCM(classNames)
+    CM = initCM(classNames)
 
     for images, labels in dataLoader:
         images = images.to(device)
