@@ -30,18 +30,33 @@ def plotTraining(history, plotsFolder):
     plt.show()
 
 
+def plotBinaryTraining(history, plotsFolder):
+    plt.figure()
+    plt.plot(history["epoch"], history["train_loss"], label="Training Loss")
+    plt.plot(history["epoch"], history["val_loss"], label="Validation Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training and Validation Loss")
+    plt.legend()
+    plt.grid()
+    plt.savefig(plotsFolder + "/training_loss")
+    plt.show()
+
+
 # Confusion matrix and metrics
-def plotConfusionMatrix(CM, plotsFolder):
-    D_CM = CM.apply(pd.to_numeric)
+def plotConfusionMatrix(CM, plotsFolder, threshold=None):
+    D_CM = CM.T.apply(pd.to_numeric)
     cm_norm = D_CM.div(D_CM.sum(axis=1), axis=0)
     disp = ConfusionMatrixDisplay(
         display_labels=cm_norm.index,
         confusion_matrix=cm_norm.values
     )
     disp.plot(values_format=".2f")
-    plt.title("Confusion Matrix")
+    title = f"Confusion Matrix"
+    if not threshold is None: title += f" th={(threshold*100):.0f}%"
+    plt.title(title)
     plt.xticks(rotation=90)
-    plt.savefig(plotsFolder + "/confusion_matrix")
+    plt.savefig(plotsFolder + "confusion_matrix.png")
     plt.show()
 
 
@@ -88,4 +103,25 @@ def bestMelanoma(TR):
     plotConfusionMatrix(bestCM, "../.")
     return deriveMetrics(bestCM, "../.").loc["Melanoma"]
 
-    
+
+
+def plotGradCam(original, visualizations, gcPath):
+    fig, axes = plt.subplots(
+        1,
+        len(visualizations) + 1,
+        figsize=(4 * (len(visualizations) + 1), 4)
+    )
+
+    axes[0].imshow(original)
+    axes[0].set_title("Input")
+    axes[0].axis("off")
+
+    for ax, (name, vis) in zip(axes[1:], visualizations.items()):
+        ax.imshow(vis)
+        ax.set_title(name)
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.savefig(gcPath)
+    plt.show()
+

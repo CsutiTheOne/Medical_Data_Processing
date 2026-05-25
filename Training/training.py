@@ -4,6 +4,10 @@ from collections import Counter
 import gc
 
 import torch
+from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam.utils.image import show_cam_on_image
+from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+
 import pandas as pd
 pd.options.display.max_columns = None
 pd.options.display.max_rows = None
@@ -31,6 +35,7 @@ class Config:
     workers    = 8 #CPU workers to load data to gpu
     learningRate = 1e-4
     weightDecay  = 1e-4
+    binaryThershold = None
 
     trainingEpochs = 50
     gpuSleep        = 120 #Seconds to let gpu cool
@@ -50,15 +55,19 @@ class TrainingResources:
 
     model = None
     
-    criterion = optimizer = None
+    criterion = optimizer = scheduler = None
     train_loader = val_loader = test_loader = None
 
     def initPaths(self, modelName):
         modelFolder = f"Models/{modelName}"
+        
         plotsFolder = f"{modelFolder}/plots"
         self.plotsFolder = plotsFolder
-        
         makedirs(plotsFolder, exist_ok=True)
+
+        gradCamsFolder = f"{modelFolder}/gradCams"
+        self.gradCamsFolder = gradCamsFolder
+        makedirs(gradCamsFolder, exist_ok=True)
         
         self.latestModelPath = f"{modelFolder}/latest.pth"  #weights after last training epoch
         self.bestValPath = f"{modelFolder}/best_val.pth"    #weights with highest validation score
@@ -71,9 +80,9 @@ class TrainingResources:
 
         self.model = model.to(self.device)
 
-        self.train_loader, self.val_loader, self.test_loader = lib.getDataLoaders(c.batchSize, c.workers, c.numClasses==2)
+        self.train_loader, self.val_loader, self.test_loader = lib.getDataLoaders(c.batchSize, c.workers, c.numClasses==1)
 
-        self.criterion, self.optimizer = initTrainers(c, self.model, self.train_loader.dataset)
+        self.criterion, self.optimizer, self.scheduler = initTrainers(c, self.model, self.train_loader.dataset)
         # ensure criterion (loss weights) is on the same device
         try:
             self.criterion = self.criterion.to(self.device)
@@ -139,29 +148,34 @@ def initClassifierTrainers(c:Config, model, dataset):
     criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor(invFreqs))
     optimizer = torch.optim.AdamW(model.parameters(), lr=c.learningRate, weight_decay=c.weightDecay)
 
-    return criterion, optimizer
+    return criterion, optimizer, None
 
 #For binary classifier
 def calcMelanomaWeights(dataset):
-    totalSamples = len(dataset) #ok
+    #totalSamples = len(dataset)
     melanoma = 0
     nonMelanoma = 0
     for classIdx, count in Counter(dataset.targets).items():
-        if dataset.classes[classIdx] == "Melanoma":
+        if dataset.originalClasses[classIdx] == "Melanoma":
             melanoma += count
         else:
             nonMelanoma += count
-    samples = [nonMelanoma, melanoma]
-    numClasses = len(samples)
-    return [ totalSamples/(numClasses * samples[i]) for i in range(numClasses) ] #inverse frequencies
+    #samples = [nonMelanoma, melanoma]
+    #numClasses = len(samples)
+    #invFreqs = [ totalSamples/(numClasses * samples[i]) for i in range(numClasses) ] #inverse frequencies
+    return [nonMelanoma/melanoma]
 
 def initMelanomaDetectorTrainers(c:Config, model, dataset):
     #Different optimizer and loss for melanoma detection
-    invFreqs = calcMelanomaWeights(dataset)
-    criterion = torch.nn.BCEWithLogitsLoss(weight=torch.tensor(invFreqs))
+    weight = calcMelanomaWeights(dataset)
+    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(weight))
     optimizer = torch.optim.AdamW(model.parameters(), lr=c.learningRate, weight_decay=c.weightDecay)
-
-    return criterion, optimizer
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=c.trainingEpochs,
+        eta_min=c.learningRate*0.1
+    )
+    return criterion, optimizer, scheduler
 
 
 #############################
@@ -186,6 +200,8 @@ def trainingLoop(c:Config, tr:TrainingResources, stopAt = 0):
     val_loader = tr.val_loader
     criterion = tr.criterion
     optimizer = tr.optimizer
+    scheduler = tr.scheduler
+    binaryThreshold = c.binaryThreshold
     history = tr.history
 
     epochs = c.trainingEpochs
@@ -200,8 +216,8 @@ def trainingLoop(c:Config, tr:TrainingResources, stopAt = 0):
     for epoch in range(tr.epochs_done, epochs):
         print(f"Epoch {epoch+1}/{epochs} \t| ", end="")
         #Executing training and validation
-        train_loss, train_acc = lib.trainingEpoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc, CM = lib.validate(model, val_loader, criterion, device)
+        train_loss, train_acc = lib.trainingEpoch(model, train_loader, criterion, optimizer, scheduler, device, binaryThreshold=binaryThreshold)
+        val_loss, val_acc, CM = lib.validate(model, val_loader, criterion, device, binaryThreshold=binaryThreshold)
 
         print(
             f"train loss: {train_loss:.4f}, train acc: {train_acc:.4f} | "
@@ -224,4 +240,69 @@ def trainingLoop(c:Config, tr:TrainingResources, stopAt = 0):
         
         if epoch == epochs-1: break
         sleep(c.gpuSleep) #Let GPU cool a little
-    
+
+
+################
+#   GRAD CAM   #
+################
+
+def reshape_transform_Swin(tensor):
+    #Swin reshape transform
+    if tensor.ndim == 4:
+        # torchvision Swin usually gives [B, H, W, C]
+        return tensor.permute(0, 3, 1, 2)
+
+    if tensor.ndim == 3:
+        # Transformer token format: [B, N, C]
+        b, n, c = tensor.shape
+        h = w = int(n ** 0.5)
+        return tensor.reshape(b, h, w, c).permute(0, 3, 1, 2)
+
+    raise ValueError(f"Unexpected tensor shape: {tensor.shape}")
+
+def reshape_transform_CoAtNet(tensor):
+    if tensor.ndim == 4:
+        # If channels-first already: [B, C, H, W]
+        if tensor.shape[1] > tensor.shape[-1]:
+            return tensor
+
+        # If channels-last: [B, H, W, C]
+        return tensor.permute(0, 3, 1, 2)
+
+    if tensor.ndim == 3:
+        # Token format: [B, N, C]
+        b, n, c = tensor.shape
+        h = w = int(n ** 0.5)
+        return tensor.reshape(b, h, w, c).permute(0, 3, 1, 2)
+
+    raise ValueError(f"Unexpected tensor shape: {tensor.shape}")
+
+
+def GradCam(tr:TrainingResources, inputTensor, modelLayers, reshape, rgbImage):
+    tr.model.eval()
+    with torch.no_grad():
+        img = inputTensor.unsqueeze(0).to(tr.device)
+        logits = tr.model(img)
+        predicted_class = logits.argmax(dim=1).item()
+
+    targets = [ClassifierOutputTarget(predicted_class)]
+
+    visualizations = {}
+    for name, layer in modelLayers.items():
+        cam = GradCAM(
+            model=tr.model,
+            target_layers=[layer],
+            reshape_transform=reshape
+        )
+
+        grayscale_cam = cam(
+            input_tensor=img,
+            targets=targets
+        )[0]
+
+        visualizations[name] = show_cam_on_image(
+            rgbImage,
+            grayscale_cam,
+            use_rgb=True
+        )
+    return visualizations

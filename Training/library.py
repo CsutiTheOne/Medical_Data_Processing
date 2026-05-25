@@ -52,10 +52,14 @@ def composeRegularTransforms():
 
 #Unnormalize image
 #Usually for demo display
-meanT = torch.tensor(STD)
-stdT = torch.tensor(MEAN)
+meanT = torch.tensor(MEAN).view(3, 1, 1)
+stdT = torch.tensor(STD).view(3, 1, 1)
 def UnnormalizeImage(img):
-    return img * meanT + stdT
+    img = img.clone()          # shape [C,H,W]
+    img = img * stdT + meanT
+    img = img.clamp(0, 1)
+    img = img.permute(1, 2, 0).cpu().numpy()
+    return img
 
 
 
@@ -66,9 +70,14 @@ def UnnormalizeImage(img):
 class BinaryMelanomaDataset(datasets.ImageFolder):
     #This class wraps around the original ds
     #but turns every class other then melanoma to 0
+    def __init__(self, root, transform=None):
+        super().__init__(root, transform)
+        self.originalClasses = self.classes
+        self.classes = ["Non-Melanoma", "Melanoma"]
+
     def __getitem__(self, index):
         img, originalLabel = super().__getitem__(index)
-        className = self.classes[originalLabel]
+        className = self.originalClasses[originalLabel]
         newLabel = 1.0 if className == "Melanoma" else 0.0
         return img, torch.tensor(newLabel, dtype=torch.float32)
 
@@ -102,14 +111,14 @@ def getDataLoaders(batchSize, workers, binary=False):
 
     return trainLoader, valLoader, testLoader
 
-#Binary is non-binary közötti választás lehetne sokkal rövidebb de mostmár nem varjálom
+#Binary és non-binary közötti választás lehetne sokkal rövidebb de mostmár nem varjálom
 
 ##################################
 #   FUNCTION USED FOR TRAINING   #
 ##################################
 
 @torch.no_grad()
-def validate(model, dataLoader, criterion, device):
+def validate(model, dataLoader, criterion, device, binaryThreshold=None):
     """
         By iterating trough dataloader records 
         the performance of provided model
@@ -127,25 +136,28 @@ def validate(model, dataLoader, criterion, device):
     for images, labels in dataLoader:
         images = images.to(device)
         labels = labels.to(device)
+        if binaryThreshold is not None:
+            labels = labels.float().unsqueeze(1)
 
         logits = model(images) #inference
         loss = criterion(logits, labels)
 
         running_loss += loss.item() * labels.size(0)
 
-        preds = logits.argmax(dim=1)
+        probs = torch.sigmoid(logits)
+        preds = probs >= binaryThreshold if binaryThreshold else logits.argmax(dim=1)
         correct += (preds == labels).sum().item()
         total += labels.size(0)
 
         for pred, label in zip(preds.cpu(), labels.cpu()):
-            CM.loc[classNames[pred.item()], classNames[label.item()]] += 1
+            CM.loc[classNames[int(pred.item())], classNames[int(label.item())]] += 1 #Ez valószínüleg fordítva gyűjt
 
     loss = running_loss / total
     acc = correct / total
     return loss, acc, CM
 
 
-def trainingEpoch(model, dataLoader, criterion, optimizer, device):
+def trainingEpoch(model, dataLoader, criterion, optimizer, scheduler, device, binaryThreshold=None):
     """
         Executes a single training epoch on the model
     """
@@ -159,6 +171,8 @@ def trainingEpoch(model, dataLoader, criterion, optimizer, device):
     for images, labels in dataLoader:
         images = images.to(device)
         labels = labels.to(device)
+        if binaryThreshold is not None:
+            labels = labels.float().unsqueeze(1)
 
         optimizer.zero_grad()
 
@@ -168,10 +182,13 @@ def trainingEpoch(model, dataLoader, criterion, optimizer, device):
         #updating model weights
         loss.backward()
         optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
 
         running_loss += loss.item() * images.size(0)
 
-        preds = logits.argmax(dim=1)
+        probs = torch.sigmoid(logits)
+        preds = probs >= binaryThreshold if binaryThreshold is not None else logits.argmax(dim=1)
         correct += (preds == labels).sum().item()
         total += labels.size(0)
 

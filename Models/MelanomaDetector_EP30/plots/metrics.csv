@@ -1,0 +1,3 @@
+,accuracy,precision,recall,f1
+Non-Melanoma,79.73,99.91,75.39,85.93
+Melanoma,79.73,46.81,99.7,63.71
