@@ -305,4 +305,4 @@ def GradCam(tr:TrainingResources, inputTensor, modelLayers, reshape, rgbImage):
             grayscale_cam,
             use_rgb=True
         )
-    return visualizations
+    return visualizations, logits
