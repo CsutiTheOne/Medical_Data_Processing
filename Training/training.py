@@ -281,10 +281,12 @@ def reshape_transform_CoAtNet(tensor):
 def GradCam(tr:TrainingResources, inputTensor, modelLayers, reshape, rgbImage):
     tr.model.eval()
     with torch.no_grad():
-        img = inputTensor.unsqueeze(0).to(tr.device)
-        logits = tr.model(img)
+        img_inference = inputTensor.unsqueeze(0).to(tr.device)
+        logits = tr.model(img_inference)
         predicted_class = logits.argmax(dim=1).item()
 
+    # Second pass: compute GradCAM (requires gradients)
+    img = inputTensor.unsqueeze(0).to(tr.device).requires_grad_(True)
     targets = [ClassifierOutputTarget(predicted_class)]
 
     visualizations = {}
